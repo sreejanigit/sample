@@ -2,3 +2,10 @@
   inputs:
     Contents: '**'
     TargetFolder: '$(build.artifactstagingdirectory)/s3bucket'
+- task: ArchiveFiles@2
+  inputs:
+    rootFolderOrFile: '$(build.artifactstagingdirectory)/s3bucket'
+    includeRootFolder: true
+    archiveType: 'zip'
+    archiveFile: '$(build.artifactstagingdirectory)/s3bucket.zip'
+    replaceExistingArchive: true
