@@ -1,5 +1,4 @@
 - task: CopyFiles@2
   inputs:
-    SourceFolder: 'sreejanigit/sample'
     Contents: '**'
-    TargetFolder: '$(build.artifactstagingdirectory)/s3filesfromgit'
+    TargetFolder: '$(build.artifactstagingdirectory)/s3bucket'
