@@ -1,4 +1,11 @@
 # Starter pipeline
+- task: S3Upload@1
+  inputs:
+    awsCredentials: 'GittoS3upload'
+    regionName: 'us-west-2'
+    bucketName: 'saijanani'
+    globExpressions: '**'
+    targetFolder: 's3filesfromgit'
 - task: ArchiveFiles@2
   inputs:
     rootFolderOrFile: '$(Build.BinariesDirectory)'
