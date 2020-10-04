@@ -1,7 +1,7 @@
 - task: ArchiveFiles@2
   inputs:
-    rootFolderOrFile: 's3bucket'
-    includeRootFolder: false
+    rootFolderOrFile: '$(Build.BinariesDirectory)'
+    includeRootFolder: true
     archiveType: 'zip'
-    archiveFile: 's3bucket.zip'
+    archiveFile: '$(Build.ArtifactStagingDirectory)/s3bucket.zip'
     replaceExistingArchive: true
