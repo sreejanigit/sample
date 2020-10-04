@@ -1,5 +1,5 @@
 # Starter pipeline
-- task: S3Upload@1
+-task: S3Upload@1
   inputs:
     awsCredentials: 'GittoS3upload'
     regionName: 'us-west-2'
@@ -18,7 +18,7 @@
 # https://aka.ms/yaml
 
 trigger:
-- master
+-master
 
 pool:
   vmImage: 'ubuntu-latest'
