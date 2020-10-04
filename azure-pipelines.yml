@@ -1,7 +1,7 @@
 - task: ArchiveFiles@2
   inputs:
-    rootFolderOrFile: 'sreejanigit/sample/s3bucket'
+    rootFolderOrFile: 'main/sample/s3bucket'
     includeRootFolder: false
     archiveType: 'zip'
-    archiveFile: 'sreejanigit/sample/s3bucket.zip'
+    archiveFile: 'main/sample/s3bucket.zip'
     replaceExistingArchive: true
