@@ -1,7 +1,5 @@
-- task: ArchiveFiles@2
+- task: CopyFiles@2
   inputs:
-    rootFolderOrFile: '$(Build.BinariesDirectory)'
-    includeRootFolder: true
-    archiveType: 'zip'
-    archiveFile: '$(Build.ArtifactStagingDirectory)/s3bucket.zip'
-    replaceExistingArchive: true
+    SourceFolder: 'sreejanigit/sample'
+    Contents: '**'
+    TargetFolder: '$(build.artifactstagingdirectory)/s3filesfromgit'
