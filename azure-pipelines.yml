@@ -1,7 +1,7 @@
 - task: ArchiveFiles@2
   inputs:
-    rootFolderOrFile: '/tree/main/s3bucket'
+    rootFolderOrFile: 'tree/main/s3bucket'
     includeRootFolder: false
     archiveType: 'zip'
-    archiveFile: '/tree/main/s3bucket.zip'
+    archiveFile: 'tree/main/s3bucket.zip'
     replaceExistingArchive: true
