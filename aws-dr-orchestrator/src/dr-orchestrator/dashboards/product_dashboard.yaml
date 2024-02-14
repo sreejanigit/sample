@@ -1,0 +1,76 @@
+---
+Parameters:
+  StartTime:
+    Type: String
+    Default: -PT1H
+  LambdaLoggerFunctionName:
+    Type: String
+    Default: aws-dr-orchestrator-lambda-logger
+Resources:
+  DashboardSideBySide:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${AWS::StackName}"
+      DashboardBody: 
+        Fn::Sub: |
+          {
+            "start": "${StartTime}",
+            "widgets": [
+                {
+                  "height": 7,
+                  "width": 11,
+                  "y": 0,
+                  "x": 0,
+                  "type": "log",
+                  "properties": {
+                      "query": "SOURCE '/aws/lambda/${LambdaLoggerFunctionName}' | fields @timestamp, Product,  ApplicationName, RTO, LinkToAppDashboard\n| filter level = \"INFO\" and ispresent(Product) and lifeCyclePhase = \"INSTANTIATE\" and Product = \"true\" \n| display @timestamp, lifeCyclePhase, ApplicationName,RTO, LinkToAppDashboard \n| sort @timestamp, resourceName",
+                      "region": "${AWS::Region}",
+                      "stacked": false,
+                      "title": "INSTANTIATE",
+                      "view": "table"
+                  }
+                },
+                {
+                  "height": 7,
+                  "width": 11,
+                  "y": 0,
+                  "x":0,
+                  "type": "log",
+                  "properties": {
+                      "query": "SOURCE '/aws/lambda/${LambdaLoggerFunctionName}' | fields @timestamp, Product,  ApplicationName, LinkToAppDashboard, RTO \n| filter level = \"INFO\" and ispresent(Product) and lifeCyclePhase = \"ACTIVATE\" and ProductName = \"true\" \n| display @timestamp, lifeCyclePhase,ApplicationName, RTO, LinkToAppDashboard \n| sort @timestamp, resourceName",
+                      "region": "${AWS::Region}",
+                      "stacked": false,
+                      "title": "ACTIVATE",
+                      "view": "table"
+                  }
+                },
+                {
+                  "height": 7,
+                  "width": 11,
+                  "y": 0,
+                  "x": 0,
+                  "type": "log",
+                  "properties": {
+                      "query": "SOURCE '/aws/lambda/${LambdaLoggerFunctionName}' | fields @timestamp,  Product,  ApplicationName,  LinkToAppDashboard, RTO \n| filter level = \"INFO\" and ispresent(Product) and lifeCyclePhase = \"REPLICATE\" and ProductName = \"true\" \n| display @timestamp, lifeCyclePhase,ApplicationName, RTO, LinkToAppDashboard \n| sort @timestamp, resourceName",
+                      "region": "${AWS::Region}",
+                      "stacked": false,
+                      "title": "REPLICATE",
+                      "view": "table"
+                  }
+                },
+                {
+                  "height": 7,
+                  "width": 11,
+                  "y": 0,
+                  "x": 0,
+                  "type": "log",
+                  "properties": {
+                      "query": "SOURCE '/aws/lambda/${LambdaLoggerFunctionName}' | fields @timestamp,  Product,  ApplicationName, LinkToAppDashboard, RTO \n| filter level = \"INFO\" and ispresent(Product) and lifeCyclePhase = \"CLEAUP\" and ProductName = \"true\" \n| display @timestamp, lifeCyclePhase,ApplicationName, RTO, LinkToAppDashboard \n| sort @timestamp, resourceName",
+                      "region": "${AWS::Region}",
+                      "stacked": false,
+                      "title": "CLEANUP",
+                      "view": "table"
+                  }
+                }
+            ]
+          }

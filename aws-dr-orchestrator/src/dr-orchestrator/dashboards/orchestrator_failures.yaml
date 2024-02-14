@@ -1,0 +1,61 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Parameters:
+  StartTime:
+    Type: String
+    Default: -PT1H
+  OrchestratorStepFunctionsPrefix:
+    Type: String
+    Default: aws-dr-orchestrator-
+  FailuresNotificationSNSTopicName:
+    Type: String
+    Default: aws-dr-orchestrator-notification-topic
+  LogGroupName:
+    Type: String
+    Default: stepfunctionfailures
+Resources:
+  EventsRule:
+    Type: "AWS::Events::Rule"
+    Properties:
+      Name: "stepfunctionfailures"
+      EventPattern: !Sub "{\"source\":[\"aws.states\"],\"detail-type\":[\"Step Functions Execution Status Change\"],\"detail\":{\"status\":[\"FAILED\"],\"stateMachineArn\":[{\"prefix\":\"arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${OrchestratorStepFunctionsPrefix}\"}]}}"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: !GetAtt LogsLogGroup.Arn
+          Id: "OrchestratorFailureLogs"
+        - 
+          Arn: !Sub "arn:aws:sns:us-east-1:${AWS::AccountId}:${FailuresNotificationSNSTopicName}"
+          Id: "SNSNotification"
+      EventBusName: "default"
+
+  LogsLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+        LogGroupName: !Sub "/aws/events/${LogGroupName}"
+
+  DashboardSideBySide:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${AWS::StackName}"
+      DashboardBody: 
+        Fn::Sub: |
+          {
+            "start": "${StartTime}",
+            "widgets": [
+                {
+                  "height": 7,
+                  "width": 11,
+                  "y": 0,
+                  "x": 0,
+                  "type": "log",
+                  "properties": {
+                      "query": "SOURCE '/aws/events/${LogGroupName}' | fields @timestamp as Timestamp, detail.executionArn as StepFunctionArn, detail.status as Status\n| sort @timestamp desc",
+                      "region": "${AWS::Region}",
+                      "stacked": false,
+                      "title": "Stepfunction failures",
+                      "view": "table"
+                  }
+                }
+              ]
+            }

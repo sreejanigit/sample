@@ -1,0 +1,73 @@
+---
+Parameters:
+  StartTime:
+    Type: String
+    Default: -PT1H
+Resources:
+  DashboardSideBySide:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${AWS::StackName}"
+      DashboardBody: 
+        Fn::Sub: |
+          {
+            "start": "${StartTime}",
+            "widgets": [
+                {
+                  "height": 7,
+                  "width": 11,
+                  "y": 0,
+                  "x": 0,
+                  "type": "log",
+                  "properties": {
+                      "query": "SOURCE '/aws/lambda/aws-dr-orchestrator-lambda-send-success-token' | fields @timestamp, level, resourceType, resourceName, message, RTO\n| filter level = \"INFO\" and ispresent(resourceType) and lifeCyclePhase = \"INSTANTIATE\" and ApplicationName = \"${AWS::StackName}\" \n| display @timestamp, lifeCyclePhase, resourceType, resourceName, RTO\n| sort @timestamp,resourceType, resourceName",
+                      "region": "${AWS::Region}",
+                      "stacked": false,
+                      "title": "INSTANTIATE",
+                      "view": "table"
+                  }
+                },
+                {
+                  "height": 7,
+                  "width": 11,
+                  "y": 0,
+                  "x":0,
+                  "type": "log",
+                  "properties": {
+                      "query": "SOURCE '/aws/lambda/aws-dr-orchestrator-lambda-send-success-token' | fields @timestamp, level, resourceType, resourceName, message, RTO\n| filter level = \"INFO\" and ispresent(resourceType) and lifeCyclePhase = \"ACTIVATE\" and ApplicationName = \"${AWS::StackName}\" \n| display @timestamp, lifeCyclePhase, resourceType, resourceName, RTO\n| sort @timestamp,resourceType, resourceName",
+                      "region": "${AWS::Region}",
+                      "stacked": false,
+                      "title": "ACTIVATE",
+                      "view": "table"
+                  }
+                },
+                {
+                  "height": 7,
+                  "width": 11,
+                  "y": 0,
+                  "x": 0,
+                  "type": "log",
+                  "properties": {
+                      "query": "SOURCE '/aws/lambda/aws-dr-orchestrator-lambda-send-success-token' | fields @timestamp, level, resourceType, resourceName, message, RTO\n| filter level = \"INFO\" and ispresent(resourceType) and lifeCyclePhase = \"REPLICATE\" and ApplicationName = \"${AWS::StackName}\" \n| display @timestamp, lifeCyclePhase, resourceType, resourceName, RTO\n| sort @timestamp,resourceType, resourceName",
+                      "region": "${AWS::Region}",
+                      "stacked": false,
+                      "title": "REPLICATE",
+                      "view": "table"
+                  }
+                },
+                {
+                  "height": 7,
+                  "width": 11,
+                  "y": 0,
+                  "x": 0,
+                  "type": "log",
+                  "properties": {
+                      "query": "SOURCE '/aws/lambda/aws-dr-orchestrator-lambda-send-success-token' | fields @timestamp, level, resourceType, resourceName, message, RTO\n| filter level = \"INFO\" and ispresent(resourceType) and lifeCyclePhase = \"CLEANUP\" and ApplicationName = \"${AWS::StackName}\"\n| display @timestamp, lifeCyclePhase, resourceType, resourceName, RTO\n| sort @timestamp,resourceType, resourceName",
+                      "region": "${AWS::Region}",
+                      "stacked": false,
+                      "title": "CLEANUP",
+                      "view": "table"
+                  }
+                }
+            ]
+          }

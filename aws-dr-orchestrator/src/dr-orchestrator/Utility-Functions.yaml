@@ -1,0 +1,405 @@
+---
+Description: Template to deploy all the utility function for orchestration
+Parameters:
+  TargetAccountsAssumeRoleName:
+    Type: String
+    Default: /drorchestrator/baseline/target-execution-role
+  OrgId:
+    Type: String
+    Default: /drorchestrator/baseline/orgid
+  Bucket:
+    Type: String
+Resources:
+  LambdaSendSuccessToken:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: aws-dr-orchestrator-lambda-send-success-token
+      Handler: "index.lambda_handler"
+      Role: !GetAtt "IAMModulesLambdaExecutionRole.Arn"
+      Runtime: "python3.7"
+      ReservedConcurrentExecutions: 10
+      Layers:
+        - !Sub arn:aws:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPython:11
+      Timeout: 25
+      Code:
+        ZipFile:
+          Fn::Sub: |
+            import boto3
+            import logging
+            import datetime
+            import os
+            from datetime import timezone
+            from aws_lambda_powertools.logging import Logger
+            logger = Logger()
+
+            step_functions = boto3.client('stepfunctions')
+
+            @logger.inject_lambda_context()
+            def lambda_handler(event, context):
+              task_token = event.get("TaskToken")
+              sf_starttime = datetime.datetime.fromisoformat(event.get('SfStartTime',"1999-01-01T00:00:00.000Z").replace('Z', '+00:00'))
+              sf_endtime = datetime.datetime.now(timezone.utc)
+              sf_timetocomplete = sf_endtime-sf_starttime
+              logger_fields= {
+                  "lifeCyclePhase": event.get("lifeCyclePhase",""),
+                  "Product": event.get("Product",""),
+                  "ApplicationName": event.get("AppName",""),
+                  "resourceName": event.get("resourceName",""),
+                  "resourceType": event.get("resourceType",""),
+                  "RTO":sf_timetocomplete
+                }
+
+              logger.info("Module executed successfully", extra=logger_fields)
+              step_functions.send_task_success(
+                    taskToken=task_token,
+                    output='{"status":"success"}'
+                )
+
+  LambdaOrchestratorValidate:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: aws-dr-orchestrator-lambda-orchestrator-validate
+      Handler: "index.lambda_handler"
+      Role: !GetAtt "IAMModulesLambdaExecutionRole.Arn"
+      Runtime: "python3.7"
+      ReservedConcurrentExecutions: 10
+      Environment:
+        Variables:
+            BUCKETNAME: !Ref Bucket
+            DR_LIFECYCLE_STATE_PARAM_NAME_SUFFIX: 'dr-lifecycle-state'
+      Layers:
+        - !Sub arn:aws:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPython:11
+      Timeout: 900
+      Code:
+        ZipFile:
+          Fn::Sub: |
+            import json
+            import os
+            import boto3
+            from jsonschema import validate
+            
+            seq = ("instantiate-us-west-2", "activate-us-west-2", "cleanup-us-east-1","replicate-us-east-1","instantiate-us-east-1", "activate-us-east-1", "cleanup-us-west-2","replicate-us-west-2","instantiate-us-west-2")
+            
+            schema = {
+              "$schema": "http://json-schema.org/draft-04/schema#",
+              "description": "Modified JSON Schema draft v4 that includes the optional '$ref' and 'format'",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "layer": {
+                    "type": "integer"
+                  },
+                  "resources": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "action": {
+                          "type": "string"
+                        },
+                        "resourceName": {
+                          "type": "string"
+                        },
+                        "AccountId": {
+                          "type": "string"
+                        },
+                        "parameters": {}
+                      },
+                      "required": [
+                        "action",
+                        "resourceName",
+                        "AccountId",
+                        "parameters"
+                      ],
+                      "additionalProperties": False
+                    }
+                  }
+                },
+                "required": [
+                  "layer",
+                  "resources"
+                ]
+              }
+            }
+            
+            
+            def validate_lifecycle_transition(event):
+                
+                lifecycle = event["lifecycle"]
+                appname = event["application"]
+                region = os.environ["AWS_REGION"]
+                
+                ssm_client = boto3.client("ssm")
+                param_name = f"/{appname.lower()}/{os.environ['DR_LIFECYCLE_STATE_PARAM_NAME_SUFFIX']}"
+                prev_event = ssm_client.get_parameter(Name=param_name)['Parameter']['Value']
+            
+                next_event = lifecycle +"-" + region
+                if seq.index(next_event) == seq.index(prev_event) or seq.index(next_event) == seq.index(prev_event)+1:
+                    print("pass")
+                else:
+                    raise Exception(f"Lifecycle {next_event} triggered is inappropriate, expecting {seq[seq.index(prev_event)+1]}")
+            
+            
+            def validate_manifest_schema(event):
+                s3_client = boto3.client("s3")
+                manifest_obj = s3_client.get_object(Bucket=os.environ("BUCKETNAME"),Key=event["manifestpath"])
+                manifest = manifest_obj["Body"].read()
+                validate(instance=json.loads(manifest),schema=schema)
+                
+            def lambda_handler(event, context):
+                validate_lifecycle_transition(event)
+                validate_manifest_schema(event)
+            
+                
+  LambdaLogger:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: aws-dr-orchestrator-lambda-logger
+      Handler: "index.lambda_handler"
+      Role: !GetAtt "IAMModulesLambdaExecutionRole.Arn"
+      Runtime: "python3.7"
+      ReservedConcurrentExecutions: 10
+      Layers:
+        - !Sub arn:aws:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPython:11
+      Timeout: 25
+      Code:
+        ZipFile:
+          Fn::Sub: |
+            import boto3
+            import logging
+            import datetime
+            import os
+            from datetime import timezone
+            from aws_lambda_powertools.logging import Logger
+            logger = Logger()
+
+            step_functions = boto3.client('stepfunctions')
+
+            @logger.inject_lambda_context()
+            def lambda_handler(event, context):
+                if "action" in event and event.get("action") == "SWIPEIN":
+                    return {"SwippedInAt" : str(datetime.datetime.now(timezone.utc))}
+                else:
+                    #sf_starttime = datetime.datetime.fromisoformat(event.get('SfStartTime',"1999-01-01T00:00:00.000Z").replace('Z', '+00:00'))
+                    sf_starttime = datetime.datetime.fromisoformat(event["SfStartTime"])
+                    sf_endtime = datetime.datetime.now(timezone.utc)
+                    sf_timetocomplete = sf_endtime-sf_starttime
+                    logger_fields= {
+                        "lifeCyclePhase": event.get("lifeCyclePhase",""),
+                        "Product": event.get("Product",""),
+                        "ApplicationName": event.get("ApplicationName",""),
+                        "LinkToAppDashboard": f'https://{os.environ["AWS_REGION"]}.console.aws.amazon.com/cloudwatch/home?region={os.environ["AWS_REGION"]}#dashboards:name={event.get("ApplicationName")};autoRefresh=10',
+                        "RTO":sf_timetocomplete
+                      }
+                    logger.info(f'Application {event.get("lifeCyclePhase")} - COMPLETE', extra=logger_fields)
+
+  IAMModulesLambdaExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub "aws-orchestrator-master-role-${AWS::Region}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: CWLogsPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: !Sub "arn:${AWS::Partition}:logs:*:*:*"
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource:
+                  - !Sub "arn:aws:iam::*:role/{{resolve:ssm:${TargetAccountsAssumeRoleName}}}"
+                Condition:
+                  StringEquals:
+                    aws:PrincipalOrgID:
+                    - !Sub "{{resolve:ssm:${OrgId}}}"
+              - Effect: Allow
+                Action:
+                  - "cloudformation:ListExports"
+                  - "s3:PutObject"
+                  - "s3:GetObject"
+                  - "cloudwatch:PutMetricAlarm"
+                  - "s3:ListBucket"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "states:SendTaskSuccess"
+                  - "states:SendTaskFailure"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "ssm:GetParameter*"
+                Resource: "*"
+
+  LamdbaGetExportValues:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: aws-dr-orchestrator-lambda-get-exports-value
+      Handler: "index.lambda_handler"
+      Role: !GetAtt "IAMModulesLambdaExecutionRole.Arn"
+      Runtime: "python3.9"
+      Timeout: 25
+      ReservedConcurrentExecutions: 10
+      Layers:
+        - !Sub arn:aws:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPython:11
+      Code:
+        ZipFile: !Sub |
+          import os
+          from typing import Any, Dict, List
+
+          import json
+          import boto3
+          from aws_lambda_powertools.logging import Logger
+          from aws_lambda_powertools.tracing import Tracer
+          from aws_lambda_powertools.metrics import Metrics, MetricUnit
+          from aws_lambda_powertools.utilities.typing import LambdaContext
+
+          ENVIRONMENT: str = os.environ.get("ENVIRONMENT", "dev")
+          POWERTOOLS_SERVICE_NAME: str = os.environ.get("POWERTOOLS_SERVICE_NAME", "ExampleService")
+          POWERTOOLS_METRICS_NAMESPACE: str = os.environ.get("POWERTOOLS_METRICS_NAMESPACE", "example")
+          DEFAULT_DIMENSIONS: Dict[str, str] = {"environment": ENVIRONMENT}
+
+          logger = Logger(service=POWERTOOLS_SERVICE_NAME)
+          patch_modules: List[str] = [
+              "boto3",
+          ]
+          tracer = Tracer(service=POWERTOOLS_SERVICE_NAME, patch_modules=patch_modules)
+
+          class EventMissingAccountNumber(Exception):
+            def __str__(self):
+                return "'AccountId' is missing in the event."
+
+          @tracer.capture_method
+          def get_cfn_list_exports(credentials: Dict[str, Any]) -> str:
+              """Return a cloudformation export full list."""
+              logger.info(f"get_cfn_list_exportsexport")
+
+              cfn_client = boto3.client(
+                  'cloudformation',
+                  aws_access_key_id=credentials["AccessKeyId"],
+                  aws_secret_access_key=credentials["SecretAccessKey"],
+                  aws_session_token=credentials["SessionToken"]
+              )
+
+              full_export_list = []
+              exports = cfn_client.list_exports()
+              while True:
+                  full_export_list.extend(exports.get("Exports", []))
+                  # check if there are more exports
+                  next_token = exports.get('NextToken')
+                  logger.info(next_token)
+                  if next_token is None:
+                      break
+                  logger.info(f"Output exceeds 100 exported output values, reading next page with NextToken: {next_token}")
+                  exports = cfn_client.list_exports(NextToken=next_token)
+              logger.info(f'full export list: {full_export_list}')
+              return full_export_list
+
+          @tracer.capture_method
+          def get_cfn_export(exports: list, exportname: str = "example") -> str:
+              logger.info(f"looking for the import variable of: {exportname}")
+              for export in exports:
+                  if exportname == export.get("Name"):
+                      return export["Value"]
+
+          @tracer.capture_method
+          def get_ssm_parameter(credentials: Dict[str, Any], path: str = "example") -> str:
+              """Return a SSM parameter."""
+              logger.info(f"get_ssm_parameter: {path}")
+
+              ssm_client = boto3.client(
+                  'ssm',
+                  aws_access_key_id=credentials["AccessKeyId"],
+                  aws_secret_access_key=credentials["SecretAccessKey"],
+                  aws_session_token=credentials["SessionToken"]
+              )
+              # WithDecrypion is ignored if we are pulling a non Secure value
+              result = ssm_client.get_parameter(Name=path, WithDecryption=True)
+              if result.get("Parameter", {}).get("Type") == "StringList":
+                return result.get("Parameter", {}).get("Value").split(",")
+              else:
+                return result.get("Parameter", {}).get("Value")
+
+          @tracer.capture_method
+          def resolve_references( obj: [list, dict] , export_list: Dict[str, Any], credentials: Dict[str, Any]):
+              if isinstance(obj, dict):
+                  for k, v in obj.items():
+                      if isinstance(v, dict):
+                          resolve_references(v,export_list, credentials)
+                      elif isinstance(v, list):
+                          for x, item in enumerate(v):
+                              if item.startswith("!Import"):
+                                  v[x] = get_cfn_export(export_list, v.split(" ")[1])
+                              elif item.startswith("resolve:ssm"):
+                                  logger.info("SSM parameter store")
+                                  split_value = v.split(":")
+                                  path = split_value[2]
+                                  if len(split_value) > 3:
+                                      path = f"{path}:{split_value[3]}"
+                                  event[key] = get_ssm_parameter(credentials, path)
+                      elif isinstance(v, str):
+                          if v.startswith("!Import"):
+                              obj[k] = get_cfn_export(export_list, v.split(" ")[1])
+                          elif v.startswith("resolve:ssm"):
+                                  logger.info("SSM parameter store")
+                                  split_value = v.split(":")
+                                  path = split_value[2]
+                                  if len(split_value) > 3:
+                                      path = f"{path}:{split_value[3]}"
+                                  obj[k] = get_ssm_parameter(credentials, path)
+
+
+          @tracer.capture_lambda_handler
+          @logger.inject_lambda_context
+          def lambda_handler(event: Dict[str, Any], context: LambdaContext) -> Dict[str, Any]:
+              """Handle the lambda invocation for returning parameters."""
+              logger.info("Entering the main lambda handler")
+              logger.info(event)
+              if "AccountId" in event.keys():
+                  sts = boto3.client('sts')
+                  stsresponse = sts.assume_role(
+                      RoleArn=f'arn:aws:iam::{event["AccountId"]}:role/aws-dr-orchestrator-execution-role',
+                      RoleSessionName='aws-dr-orchestrator-lambda-get-exports-value',
+                      DurationSeconds=900,
+                  )
+                  credentials = stsresponse["Credentials"]
+              else:
+                  raise EventMissingAccountNumber
+
+              # get full list of exports for speed
+              export_list = get_cfn_list_exports(credentials)
+              logger.info(export_list)
+              resolve_references(event, export_list, credentials)
+
+              logger.info(event)
+              return event
+
+Outputs:
+  LambdaSendTaskTokenArn:
+    Value: !GetAtt LambdaSendSuccessToken.Arn
+  LambdaSendTaskTokenName:
+    Value: !Ref LambdaSendSuccessToken
+  LambdaGetExportsValueName:
+    Value: !Ref LamdbaGetExportValues
+  LambdaGetExportsValueArn:
+    Value: !GetAtt LamdbaGetExportValues.Arn
+  IAMModulesLambdaExecutionRoleArn:
+    Value: !GetAtt IAMModulesLambdaExecutionRole.Arn
+  LambdaLoggerName:
+    Value: !Ref LambdaLogger
+  LambdaLoggerArn:
+    Value: !GetAtt LambdaLogger.Arn

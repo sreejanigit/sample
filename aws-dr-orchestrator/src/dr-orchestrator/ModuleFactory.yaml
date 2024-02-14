@@ -1,0 +1,208 @@
+---
+Description: Deployment template for modulefactory stack
+Parameters:
+  IAMModulesLambdaExecutionRoleArn:
+    Type: String
+  LambdaSendTaskTokenName:
+    Type: String
+  LambdaSendTaskTokenArn:
+    Type: String
+  S3CodeBucketName:
+    Type: String
+  TargetAccountsAssumeRoleName :
+    Type: String
+  ModuleFactoryLambdaFunctionKey:
+    Type: String
+
+Resources:
+  ModuleFactoryLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: aws-dr-orchestrator-module-factory
+      Handler: lambda_function.lambda_handler
+      Role: !Ref IAMModulesLambdaExecutionRoleArn
+      Code:
+        S3Bucket: !Ref S3CodeBucketName
+        S3Key: !Ref ModuleFactoryLambdaFunctionKey
+      Runtime: python3.12
+      Timeout: 900
+      Environment:
+        Variables:
+          region: !Sub "${AWS::Region}"
+          s3bucket: !Ref S3CodeBucketName
+          target_assume_role: !Ref TargetAccountsAssumeRoleName
+
+  IAMStepFunctionExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "states.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Ref LambdaSendTaskTokenArn
+              - Effect: Allow
+                Action:
+                  - "states:StartExecution"
+                  - "states:DescribeExecution"
+                  - "states:StopExecution"
+                  - "cloudformation:CreateStack"
+                  - "cloudformation:DescribeStackEvents"
+                  - "Cloudformation:CreateChangeSet"
+                  - "Cloudformation:DeleteStack"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "s3:*"
+                  - "ec2:DescribeSubnets"
+                  - "ec2:DescribeSecurityGroups"
+                  - "ec2:DescribeVpcs"
+                  - "lambda:*"
+                  - "iam:PassRole"
+                  - "iam:GetRole"
+                  - "iam:CreateRole"
+                  - "iam:GetRolePolicy"
+                  - "iam:PutRolePolicy"
+                  - "iam:AttachRolePolicy"
+                  - "iam:DeleteRolePolicy"
+                  - "iam:DeleteRole"
+                  - "iam:DetachRolePolicy"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: "*"
+
+  StepFunctionForModuleFactory:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: aws-dr-orchestrator-stepfunction-module-factory
+      RoleArn: !GetAtt IAMStepFunctionExecutionRole.Arn
+      TracingConfiguration:
+        Enabled: true
+      DefinitionString:
+        Fn::Sub: |
+          {
+            "Comment": "A description of my state machine",
+            "StartAt": "Skip?",
+            "States": {
+              "Skip?": {
+                "Type": "Choice",
+                "Choices": [
+                  {
+                    "Variable": "$.StatePayload.parameters.skip",
+                    "IsPresent": true,
+                    "Next": "Send success token"
+                  }
+                ],
+                "Default": "Execute lifecycle"
+              },
+              "Execute lifecycle": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::lambda:invoke",
+                "ResultPath": "$.lifecycle_output",
+                "Parameters": {
+                  "Payload.$": "$",
+                  "FunctionName": "${ModuleFactoryLambda.Arn}"
+                },
+                "Retry": [
+                  {
+                    "ErrorEquals": [
+                      "Lambda.ServiceException",
+                      "Lambda.AWSLambdaException",
+                      "Lambda.SdkClientException",
+                      "Lambda.TooManyRequestsException"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 3,
+                    "BackoffRate": 2
+                  }
+                ],
+                "Next": "Set check status flag"
+              },
+              "Set check status flag": {
+                "Type": "Pass",
+                "Parameters": {
+                  "status_check": true
+                },
+                "ResultPath": "$.status",
+                "Next": "Is the lifecycle phase complete?"
+              },
+              "Is the lifecycle phase complete?": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::lambda:invoke",
+                "ResultPath": "$.lifecycle_status",
+                "Parameters": {
+                  "Payload.$": "$",
+                  "FunctionName": "${ModuleFactoryLambda.Arn}"
+                },
+                "Retry": [
+                  {
+                    "ErrorEquals": [
+                      "Lambda.ServiceException",
+                      "Lambda.AWSLambdaException",
+                      "Lambda.SdkClientException",
+                      "Lambda.TooManyRequestsException"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 3,
+                    "BackoffRate": 2
+                  }
+                ],
+                "Next": "Choice"
+              },
+              "Choice": {
+                "Type": "Choice",
+                "Choices": [
+                  {
+                    "Variable": "$.lifecycle_status.Payload",
+                    "BooleanEquals": true,
+                    "Next": "Send success token"
+                  }
+                ],
+                "Default": "Wait"
+              },
+              "Wait": {
+                "Type": "Wait",
+                "Seconds": 5,
+                "Next": "Is the lifecycle phase complete?"
+              },
+              "Send success token": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::lambda:invoke",
+                "Parameters": {
+                  "FunctionName": "${LambdaSendTaskTokenName}",
+                  "Payload": {
+                    "TaskToken.$": "$$.Execution.Input.TaskToken",
+                    "SfStartTime.$": "$$.Execution.StartTime",
+                    "resourceType.$": "$.StatePayload.action",
+                    "resourceName.$": "$.StatePayload.resourceName",
+                    "AppName.$": "$.AppName",
+                    "lifeCyclePhase.$": "$.LifeCyclePhase"
+                  }
+                },
+                "ResultPath": "$.output",
+                "End": true
+              }
+            }
+          }
+Outputs:
+  StepFunctionForModuleFactoryArn:
+    Value: !GetAtt StepFunctionForModuleFactory.Arn

@@ -1,0 +1,15 @@
+version: 0.2
+env:
+  parameter-store:
+    BUCKET_NAME: "/drorchestrator/baseline/bucket"
+phases:
+  build:
+    commands:
+      - chmod +x src/codebuild/package_functions/package.sh
+      - /bin/bash src/codebuild/package_functions/package.sh
+artifacts:
+  files:
+    - '**/*'
+  base-directory: src/modulefactory
+  name: Lambda-Packages
+  discard-paths: no

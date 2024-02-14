@@ -1,0 +1,137 @@
+---
+Description: This template is the main orchestrator which triggers the life cycle event based on the manifest.
+Parameters:
+  S3CodeBucketName:
+    Type: String
+  StepFunctionLifecycleOrchestrateArn:
+    Type: String
+  LambdaRequestApprovalArn:
+    Type: String
+  LifeCycleStateParamNameSuffix:
+    Type: String
+    Default: dr-lifecycle-state
+Resources:
+  IAMStepFunctionExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "states.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "lambda:InvokeFunction"
+                Resource:
+                  - !Ref LambdaRequestApprovalArn
+              - Effect: Allow
+                Action:
+                  - "states:StartExecution"
+                  - "states:DescribeExecution"
+                  - "states:StopExecution"
+                  - "s3:GetObject"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: "*"
+              - Action:
+                  - 'kms:Encrypt'
+                  - 'kms:Decrypt'
+                  - 'kms:ReEncrypt*'
+                  - 'kms:GenerateDataKey*'
+                  - 'kms:DescribeKey'
+                Resource: "*"
+                Effect: Allow
+  StepFunctionOrchestrator:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: aws-dr-orchestrator-stepfunction-dr-orchestrator
+      RoleArn: !GetAtt IAMStepFunctionExecutionRole.Arn
+      TracingConfiguration:
+        Enabled: true
+      DefinitionString:
+        Fn::Sub: |
+          {
+            "Comment": "Main orchestrator stepfunction that does DR lifecycle",
+            "StartAt": "Request Approval",
+            "States": {
+              "Request Approval": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+                "ResultPath": "$.approval",
+                "Parameters": {
+                  "FunctionName": "${LambdaRequestApprovalArn}",
+                  "Payload": {
+                    "ExecutionContext.$": "$$",
+                    "Subject": "Required Approval from DR-Orchestrator",
+                    "Body.$": "States.Format('Execute the lifecycle {} for the application {}',$.lifecycle, $.application )"
+                  }
+                },
+                "Next": "ManualApprovalChoiceState"
+              },
+              "ManualApprovalChoiceState": {
+                "Type": "Choice",
+                "Choices": [
+                  {
+                    "Variable": "$.approval.Status",
+                    "StringEquals": "APPROVED",
+                    "Next": "Get parameter file"
+                  },
+                  {
+                    "Variable": "$.approval.Status",
+                    "StringEquals": "REJECTED",
+                    "Next": "RejectedPassState"
+                  }
+                ]
+              },
+              "Get parameter file": {
+                "Type": "Task",
+                "Parameters": {
+                  "Bucket": "${S3CodeBucketName}",
+                  "Key.$": "$.manifestpath"
+                },
+                "Resource": "arn:aws:states:::aws-sdk:s3:getObject",
+                "ResultPath": "$.manifestfile",
+                "Next": "LifeCycle"
+              },
+              "LifeCycle": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::states:startExecution.waitForTaskToken",
+                "Parameters": {
+                  "StateMachineArn": "${StepFunctionLifecycleOrchestrateArn}",
+                  "Input": {
+                    "TaskToken.$": "$$.Task.Token",
+                    "StatePayload.$": "States.StringToJson($.manifestfile.Body)",
+                    "AppName.$": "$.application",
+                    "lifecycle_phase.$": "$.lifecycle"
+                  }
+                },
+                "Next": "PutParameter"
+              },
+                  "PutParameter": {
+                  "Type": "Task",
+                  "End": true,
+                  "Parameters": {
+                    "Name": "States.Format('/dr/{$.application}/${LifeCycleStateParamNameSuffix}')",
+                    "Value": "States.Format('{$.lifecycle}-{Ref: AWS::Region}')"
+                  },
+                  "Resource": "arn:aws:states:::aws-sdk:ssm:putParameter"
+                },
+              "RejectedPassState": {
+                "Type": "Pass",
+                "End": true
+              }
+            }
+          }

@@ -1,0 +1,67 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  CentralAccountNumber:
+    Type: String
+    Description: "The AWS account number of the orchestrator account."
+  PrimaryRegion:
+    Type: String
+    Description: "The primary region of the orchestrator account."
+  SecondaryRegion:
+    Type: String
+    Description: "The secondary region of the orchestrator account."
+  TargetAccountsAssumeRoleName:
+    Type: String
+    Default: aws-dr-orchestrator-execution-role
+    Description: "Name of the DR execution role to be created."
+  CentralAccountS3CodeBucketNamePrimaryRegion:
+    Type: String
+    Description: "Name of the S3 bucket where manifest files are stored in the primary region of the orchestrator account."
+  CentralAccountS3CodeBucketNameSecondaryRegion:
+    Type: String
+    Description: "Name of the S3 bucket where manifest files are stored in the secondary region of the orchestrator account."
+
+Resources:
+  TargetAccountAssumeRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Ref TargetAccountsAssumeRoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+          - Effect: Allow
+            Principal:
+              AWS: 
+                - !Sub "arn:aws:iam::${CentralAccountNumber}:role/aws-orchestrator-master-role-${PrimaryRegion}"
+                - !Sub "arn:aws:iam::${CentralAccountNumber}:role/aws-orchestrator-master-role-${SecondaryRegion}"
+            Action:
+              - 'sts:AssumeRole'              
+      ManagedPolicyArns:
+        # - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        # - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        # - arn:aws:iam::aws:policy/AWSStepFunctionsFullAccess
+        # - arn:aws:iam::aws:policy/AmazonRDSFullAccess
+        # - arn:aws:iam::aws:policy/AmazonRoute53FullAccess
+        # - arn:aws:iam::aws:policy/AmazonSQSFullAccess
+        # - arn:aws:iam::aws:policy/AmazonSNSFullAccess
+        # - arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
+        # - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AdministratorAccess
+      Policies:
+        - PolicyName: CrossAccountS3CodeBucket
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:GetObject"
+                  - "s3:PutObject"
+                  - "s3:PutObjectAcl"
+                Resource: 
+                  - !Sub "arn:aws:s3:::${CentralAccountS3CodeBucketNamePrimaryRegion}/*"     
+                  - !Sub "arn:aws:s3:::${CentralAccountS3CodeBucketNameSecondaryRegion}/*"

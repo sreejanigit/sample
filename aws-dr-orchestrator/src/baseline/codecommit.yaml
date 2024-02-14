@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "CodeBuild project to validate CloudFormation templates for Self Service with Service Catalog"
+Parameters:
+  S3Key:
+    Description: Source code zip for DR orchestrator
+    Type: String
+    Default: dr-orchestrator.zip
+  RepoName:
+    Description: Name for the code commit repository
+    Type: String
+    Default: aws-dr-orchestrator
+  Tag1:
+    Description: Environment
+    Type: String
+    Default:  Value1
+  Tag2:
+    Description: Application Name
+    Type: String
+    Default:  Value2
+  Tag3:
+    Description: Application Name
+    Type: String
+    Default:  VAlue3
+
+Resources:
+  CodeCommitRepo:
+    #DeletionPolicy: Retain
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      Code:
+        BranchName: main
+        S3:
+          Bucket: '{{resolve:ssm:/drorchestrator/baseline/bucket}}'
+          Key: !Ref S3Key
+      RepositoryDescription: "CodeCommit Repository For DR Orchestrator Infrastructure As Code"
+      RepositoryName: !Ref RepoName
+      Tags:
+        - Key: Tag1
+          Value: !Ref Tag1
+        - Key: Tag2
+          Value: !Ref Tag3
+        - Key: Tag3
+          Value: !Ref Tag3
+
+  SSMParameterCodeCommitRepoName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: "DR Orchestratorsolution bucket shared with AWS Organization"
+      Name: "/drorchestrator/baseline/codecommit-repository"
+      Type: String
+      Value: !Ref RepoName
+      Tags:
+        Tag1: !Ref Tag1
+        Tag2: !Ref Tag2
+        Tag3: !Ref Tag3
+
