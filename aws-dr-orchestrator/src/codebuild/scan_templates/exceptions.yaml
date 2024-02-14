@@ -1,4 +1,0 @@
-# Uncomment and update with rules to suppress
-RulesToSuppress:
-- id: F3
-  reason: F3 will be ignored for now
